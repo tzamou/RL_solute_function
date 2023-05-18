@@ -1,90 +1,79 @@
-import gym
-from gym import spaces
-import numpy as np
-import math, time
-from sympy import *
+import optuna
 import sympy
-from stable_baselines3 import PPO
+import numpy as np
 
-class Solve_Equation(gym.Env):
+class Create_csv:
     def __init__(self):
-        self.rewardlst = []
-        self.trainreward = []
-        self.maxreward_lst = []
-        self.timesteps = 0
-        self.testtime = 0
-        self.successtime = 0
-        self.totaltimestep = 0
-        a = 10
-        low_action = np.array([-a], dtype=np.float32)
-        high_action = np.array([a], dtype=np.float32)  # z=0.027*9.8
-        self.action_space = spaces.Box(low=low_action, high=high_action)
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(6, ), dtype=np.float32)#np.inf
+        import pandas as pd
+        self.dataframe = pd.DataFrame(columns=['solution_num','domain_max','domain_max','found solution num','used step'])
+class StopWhenAllSolutionAreFound:
+    def __call__(self, study: optuna.study.Study, trial: optuna.trial.FrozenTrial) -> None:
+        if trial.state == optuna.trial.TrialState.PRUNED:
+            print(f'在尋解第{study.trials[-1].number}次時找到所有解')
+            study.stop()
 
+class Solution:
+    def __init__(self,func=None, func_coef=None):
         self.x = sympy.symbols('x')
-    def step(self, action):
-        solution = float(self.func.evalf(subs={'x': action[0]}))
-        self.totaltimestep+=1
-
-        obs = self.get_obs()
-        reward = self.get_reward(solution)
-        done = self.is_done(solution)
-
-        print(f'time:{self.totaltimestep},x={action[0]} , solution={solution}, reward={reward}')
-        return obs, reward, done, {}
-    def reset(self):
-        self.func_coef = [12,17,-1,-5,1]# ans 4,3,-1,-1
-        self.func = self.get_function(func_coef=self.func_coef)
-        obs = self.get_obs()
-        self.data_update()
-        return obs
-    def render(self, mode='human', clode=False):
-        pass
-    def close(self):
-        pass
-    def get_obs(self):
-        obs = np.array(self.func_coef)
-        solution = self.func.evalf(subs={'x': 0})
-        obs = np.append(obs,float(solution))
-        return obs
-
-    def get_reward(self,solution):
-        self.rewardlst.append(-abs(solution))
-        return -(abs(solution)**2)
-    def is_done(self,sol):
-        if round(sol,10)==0:
-            return True
-        else:
-            return False
-    def is_success(self):
-        pass
-
-    def get_function(self,func_coef):
+        if func==None:
+            assert func_coef != None, '"func_coef" can not be None!'
+            self.func = self.get_function(func_coef=func_coef, x=self.x)
+        if func_coef==None:
+            assert func != None, '"coef" can not be None!'
+            self.func = func
+        self.originfunc = self.func
+        self.sol = []
+    def get_function(self, func_coef,x):
         f = 0
         for power, coef in enumerate(func_coef, start=0):
-            f += coef * self.x ** power
+            f += coef * x ** power
         return f
-    def data_update(self):
-        if self.testtime>0:
-            print(self.rewardlst)
-            print(f"[INFO] reward: {self.rewardlst[-1]}")
-            print(f"[INFO] max reward: {max(self.rewardlst)}")
-            print(f"[INFO] min reward: {min(self.rewardlst)}")
-        self.testtime+=1
-        print(f'[INFO] testtime: {self.testtime}')
-        print(f'[INFO] successtime: {self.successtime}')
-        print(f'--------------------------------------')
+    def update_function(self, s):
+        g = self.x-s
+        self.sol.append(s)
+        Q, R = sympy.div(self.func, g, domain='ZZ')
+        self.func=Q
+    def initfunc(self):
+        self.func = self.originfunc
+        self.sol = []
 
-if __name__=='__main__':
-    env = Solve_Equation()
-    model = PPO("MlpPolicy", env, verbose=0, n_steps=3, seed=0)
-    start = time.time()
-    model.learn(total_timesteps=10000)
-    end = time.time()
-    np.save(f'reward.npy', arr=env.rewardlst)
-    # while True:
-    #     action=env.action_space.sample()
-    #     env.step(action)
+def get_random_function(solution_num=5, domain_max=10,  domain_min=-10):
+    x = sympy.symbols('x')
+    coef = np.random.randint(domain_min, domain_max, size=(solution_num, ))
+    f = 1
+    for c in coef:
+        f = f*(x-c)
+    return f.expand()
 
+def objective(trial,s, domain_max=10,  domain_min=-10):
+    x = trial.suggest_int('x', domain_min, domain_max)
+    func = s.func
+    if func==1:
+        raise optuna.TrialPruned
+    sol = func.evalf(subs={'x': x})
+    if round(sol,10)==0:
+        s.update_function(x)
+    return abs(sol)
 
+# s = Solution(func_coef = [12, 17, -1, -5, 1])
+lensol=[]
+optuna.logging.set_verbosity(optuna.logging.FATAL)
+study_stop = StopWhenAllSolutionAreFound()
 
+domain_max = 30
+domain_min = -30
+func = get_random_function(solution_num=70,domain_max=domain_max,domain_min=domain_min)
+s = Solution(func = func)
+
+for i in range(1):
+    study = optuna.create_study(direction='minimize')
+    study.optimize(lambda trial:objective(trial,s,domain_max=domain_max,domain_min=domain_min),
+                   n_trials=1000,callbacks=[study_stop]) #50 find 7sol
+
+    print(sorted(s.sol))
+    print(len(s.sol))
+    lensol.append(len(s.sol))
+    s.initfunc()
+
+print(lensol)
+#定義域大小 解的個數 n_trails的數
