@@ -1,15 +1,15 @@
 import optuna
-import sympy
+import sympy,time
 import numpy as np
+import pandas as pd
 
-class Create_csv:
-    def __init__(self):
-        import pandas as pd
-        self.dataframe = pd.DataFrame(columns=['solution_num','domain_max','domain_max','found solution num','used step'])
 class StopWhenAllSolutionAreFound:
+    def __init__(self):
+        self.used_step = None
     def __call__(self, study: optuna.study.Study, trial: optuna.trial.FrozenTrial) -> None:
         if trial.state == optuna.trial.TrialState.PRUNED:
             print(f'在尋解第{study.trials[-1].number}次時找到所有解')
+            self.used_step = study.trials[-1].number
             study.stop()
 
 class Solution:
@@ -56,24 +56,30 @@ def objective(trial,s, domain_max=10,  domain_min=-10):
     return abs(sol)
 
 # s = Solution(func_coef = [12, 17, -1, -5, 1])
-lensol=[]
+dataframe = pd.DataFrame(
+    columns=['solution_num','domain_max','domain_max','找到幾個解','用了幾個step找到所有解','n_trials','used_time (seconds)'])
+
 optuna.logging.set_verbosity(optuna.logging.FATAL)
 study_stop = StopWhenAllSolutionAreFound()
+# 'solution_num','domain_max','domain_max','found solution num','used step'
+for solution_num in range(1,101):
+    for domain in range(10, 101):
+        # solution_num = 20
+        domain_max = domain
+        domain_min = -domain
+        n_trials = 100000
+        func = get_random_function(solution_num=solution_num,domain_max=domain_max,domain_min=domain_min)
+        s = Solution(func = func)
 
-domain_max = 30
-domain_min = -30
-func = get_random_function(solution_num=70,domain_max=domain_max,domain_min=domain_min)
-s = Solution(func = func)
+        for _ in range(10):
+            study = optuna.create_study(direction='minimize')
+            t1 = time.time()
+            study.optimize(lambda trial:objective(trial,s,domain_max=domain_max,domain_min=domain_min),
+                           n_trials=n_trials,callbacks=[study_stop]) #50 find 7sol
+            t2 = time.time()
+            used_time = round(t2-t1,5)
+            dataframe.loc[len(dataframe.index)] = [solution_num, domain_max, domain_min, len(s.sol), study_stop.used_step,n_trials,used_time]
+            s.initfunc()
 
-for i in range(1):
-    study = optuna.create_study(direction='minimize')
-    study.optimize(lambda trial:objective(trial,s,domain_max=domain_max,domain_min=domain_min),
-                   n_trials=1000,callbacks=[study_stop]) #50 find 7sol
-
-    print(sorted(s.sol))
-    print(len(s.sol))
-    lensol.append(len(s.sol))
-    s.initfunc()
-
-print(lensol)
+dataframe.to_csv('./data.csv')
 #定義域大小 解的個數 n_trails的數
